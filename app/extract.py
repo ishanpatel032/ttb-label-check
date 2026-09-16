@@ -1,11 +1,20 @@
 """
 Reads the printed fields off a label image.
 
-One model call per label, returning JSON only. The model is asked to
-transcribe, never to judge: it reports what is printed, and matching.py
-decides whether that is acceptable. Keeping the judgement out of the model
-keeps the compliance rules reviewable and keeps the call short, which is
-what holds the round trip inside the five-second budget.
+The provider is configuration, not architecture. Set PROVIDER to anthropic,
+openai, azure or gemini; everything downstream is unchanged, because this
+module's only contract is `extract(image) -> dict of strings`.
+
+That matters more than which provider is chosen today. Marcus noted in the
+discovery interview that outbound traffic to cloud ML endpoints is blocked on
+their network, and that this is part of what killed the scanning vendor pilot.
+Anything real would have to run inside the FedRAMP boundary, which for an
+office already on Azure means Azure OpenAI in Azure Government. That is the
+`azure` provider below: the same code path, a different endpoint and key, with
+no change to the compliance rules, the tests or the interface.
+
+The model is asked only to transcribe. It never decides whether a label
+passes; matching.py does that with deterministic rules.
 """
 
 from __future__ import annotations
@@ -15,25 +24,9 @@ import json
 import os
 import re
 
-from anthropic import AsyncAnthropic
+import httpx
 
-MODEL = os.environ.get("MODEL", "claude-sonnet-5")
-MAX_TOKENS = 900
-
-_client: AsyncAnthropic | None = None
-
-
-def client() -> AsyncAnthropic:
-    global _client
-    if _client is None:
-        key = os.environ.get("ANTHROPIC_API_KEY")
-        if not key:
-            raise RuntimeError(
-                "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and add a key."
-            )
-        _client = AsyncAnthropic(api_key=key)
-    return _client
-
+TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 FIELDS = [
     "brand_name",
@@ -45,7 +38,7 @@ FIELDS = [
     "government_warning",
 ]
 
-SYSTEM = f"""You transcribe text from alcohol beverage labels for a compliance review tool.
+SYSTEM = """You transcribe text from alcohol beverage labels for a compliance review tool.
 
 Report only what is printed on the label. Do not correct spelling, fix
 capitalisation, expand abbreviations, or fill in what you expect to be there.
@@ -57,22 +50,18 @@ Return a single JSON object and nothing else. No prose, no code fences.
 Keys, all strings:
   brand_name         the brand as printed
   class_type         class or type designation, e.g. Kentucky Straight Bourbon Whiskey
-  abv               alcohol statement exactly as printed, e.g. "45% Alc./Vol. (90 Proof)"
-  net_contents      net contents exactly as printed, e.g. "750 mL"
-  producer          bottler, producer, importer, with city and state if shown
-  country_of_origin country of origin if stated, otherwise ""
+  abv                alcohol statement exactly as printed, e.g. "45% Alc./Vol. (90 Proof)"
+  net_contents       net contents exactly as printed, e.g. "750 mL"
+  producer           bottler, producer or importer, with city and state if shown
+  country_of_origin  country of origin if stated, otherwise ""
   government_warning the full health warning transcribed character for character,
                      preserving capitalisation exactly as printed. This one must be
                      verbatim, including whether "GOVERNMENT WARNING:" is capitalised.
-
-Also include:
-  legibility        one of "clear", "partial", "poor"
-  legibility_note   one short sentence if anything was hard to read, otherwise ""
+  legibility         one of "clear", "partial", "poor"
+  legibility_note    one short sentence if anything was hard to read, otherwise ""
 """
 
-USER_TEXT = (
-    "Transcribe this label. Return the JSON object described in your instructions."
-)
+USER_TEXT = "Transcribe this label. Return the JSON object described in your instructions."
 
 _MEDIA = {
     "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
@@ -83,6 +72,135 @@ _MEDIA = {
 def media_type(filename: str, fallback: str | None = None) -> str:
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     return _MEDIA.get(ext) or fallback or "image/jpeg"
+
+
+def provider() -> str:
+    return os.environ.get("PROVIDER", "anthropic").strip().lower()
+
+
+def _need(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(
+            f"{name} is not set. Copy .env.example to .env and fill it in."
+        )
+    return value
+
+
+# --------------------------------------------------------------------------
+# one request builder per provider
+# --------------------------------------------------------------------------
+
+def _anthropic(b64: str, mime: str) -> tuple[str, dict, dict]:
+    return (
+        "https://api.anthropic.com/v1/messages",
+        {
+            "x-api-key": _need("ANTHROPIC_API_KEY"),
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        {
+            "model": os.environ.get("MODEL", "claude-sonnet-5"),
+            "max_tokens": 900,
+            "system": SYSTEM,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "image",
+                     "source": {"type": "base64", "media_type": mime, "data": b64}},
+                    {"type": "text", "text": USER_TEXT},
+                ],
+            }],
+        },
+    )
+
+
+def _openai_body(model: str, b64: str, mime: str) -> dict:
+    return {
+        "model": model,
+        "max_tokens": 900,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": [
+                {"type": "text", "text": USER_TEXT},
+                {"type": "image_url",
+                 "image_url": {"url": f"data:{mime};base64,{b64}"}},
+            ]},
+        ],
+    }
+
+
+def _openai(b64: str, mime: str) -> tuple[str, dict, dict]:
+    return (
+        "https://api.openai.com/v1/chat/completions",
+        {"Authorization": f"Bearer {_need('OPENAI_API_KEY')}",
+         "content-type": "application/json"},
+        _openai_body(os.environ.get("MODEL", "gpt-4o"), b64, mime),
+    )
+
+
+def _azure(b64: str, mime: str) -> tuple[str, dict, dict]:
+    """Azure OpenAI, including Azure Government.
+
+    AZURE_OPENAI_ENDPOINT is the resource URL. In Azure Government that host
+    ends in .azure.us rather than .azure.com, which is the whole difference
+    between this running commercially and running inside the boundary.
+    """
+    endpoint = _need("AZURE_OPENAI_ENDPOINT").rstrip("/")
+    deployment = _need("AZURE_OPENAI_DEPLOYMENT")
+    version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21")
+    body = _openai_body(deployment, b64, mime)
+    body.pop("model", None)  # on Azure the deployment name carries this
+    return (
+        f"{endpoint}/openai/deployments/{deployment}/chat/completions"
+        f"?api-version={version}",
+        {"api-key": _need("AZURE_OPENAI_API_KEY"), "content-type": "application/json"},
+        body,
+    )
+
+
+def _gemini(b64: str, mime: str) -> tuple[str, dict, dict]:
+    model = os.environ.get("MODEL", "gemini-2.5-flash")
+    return (
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        {"x-goog-api-key": _need("GEMINI_API_KEY"), "content-type": "application/json"},
+        {
+            "system_instruction": {"parts": [{"text": SYSTEM}]},
+            "contents": [{"parts": [
+                {"inline_data": {"mime_type": mime, "data": b64}},
+                {"text": USER_TEXT},
+            ]}],
+            "generationConfig": {
+                "maxOutputTokens": 900,
+                "responseMimeType": "application/json",
+            },
+        },
+    )
+
+
+BUILDERS = {
+    "anthropic": _anthropic,
+    "openai": _openai,
+    "azure": _azure,
+    "gemini": _gemini,
+}
+
+
+# --------------------------------------------------------------------------
+# one response reader per provider
+# --------------------------------------------------------------------------
+
+def _text_from(name: str, data: dict) -> str:
+    if name == "anthropic":
+        return "".join(
+            b.get("text", "") for b in data.get("content", [])
+            if b.get("type") == "text"
+        )
+    if name == "gemini":
+        parts = data["candidates"][0]["content"]["parts"]
+        return "".join(p.get("text", "") for p in parts)
+    return data["choices"][0]["message"]["content"] or ""
 
 
 def _parse(text: str) -> dict:
@@ -104,25 +222,35 @@ def _parse(text: str) -> dict:
     return {k: (v.strip() if isinstance(v, str) else v) for k, v in out.items()}
 
 
-async def extract(image_bytes: bytes, filename: str, content_type: str | None = None) -> dict:
-    message = await client().messages.create(
-        model=MODEL,
-        max_tokens=MAX_TOKENS,
-        system=SYSTEM,
-        messages=[{
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": media_type(filename, content_type),
-                        "data": base64.b64encode(image_bytes).decode(),
-                    },
-                },
-                {"type": "text", "text": USER_TEXT},
-            ],
-        }],
+async def extract(image_bytes: bytes, filename: str,
+                  content_type: str | None = None) -> dict:
+    name = provider()
+    build = BUILDERS.get(name)
+    if not build:
+        raise RuntimeError(
+            f"PROVIDER is set to {name!r}. Use one of: {', '.join(BUILDERS)}."
+        )
+
+    url, headers, body = build(
+        base64.b64encode(image_bytes).decode(),
+        media_type(filename, content_type),
     )
-    text = "".join(b.text for b in message.content if b.type == "text")
-    return _parse(text)
+
+    async with httpx.AsyncClient(timeout=TIMEOUT) as http:
+        response = await http.post(url, headers=headers, json=body)
+
+    if response.status_code >= 400:
+        detail = response.text[:300]
+        if response.status_code in (401, 403):
+            raise RuntimeError(f"The {name} API rejected the credentials. {detail}")
+        if response.status_code == 429:
+            raise RuntimeError(
+                f"The {name} API is rate limiting. Lower BATCH_CONCURRENCY "
+                f"or wait a moment. {detail}"
+            )
+        raise RuntimeError(f"The {name} API returned {response.status_code}. {detail}")
+
+    try:
+        return _parse(_text_from(name, response.json()))
+    except (KeyError, IndexError, TypeError) as e:
+        raise ValueError(f"Unexpected response shape from {name}: {e}")

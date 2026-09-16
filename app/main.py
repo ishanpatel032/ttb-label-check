@@ -44,7 +44,8 @@ async def index():
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "key_configured": bool(os.environ.get("ANTHROPIC_API_KEY"))}
+    from .extract import provider
+    return {"ok": True, "provider": provider()}
 
 
 def _read(upload: UploadFile, data: bytes) -> None:

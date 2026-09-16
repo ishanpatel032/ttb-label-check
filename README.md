@@ -17,7 +17,7 @@ python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-cp .env.example .env             # then add your ANTHROPIC_API_KEY
+cp .env.example .env             # then set PROVIDER and the matching key
 export $(grep -v '^#' .env | xargs)
 
 uvicorn app.main:app --reload
@@ -30,11 +30,16 @@ Run the tests with `python tests/test_matching.py` or `python -m pytest`.
 ## Deploying
 
 The repo includes `render.yaml`. On Render, create a new Blueprint from the
-repo and set `ANTHROPIC_API_KEY` in the dashboard. Anywhere that runs a Python
-web service works the same way:
+repo and set `PROVIDER` plus the matching API key in the dashboard. Anywhere
+that runs a Python web service works the same way:
 
 - build: `pip install -r requirements.txt`
 - start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+
+The free instance tier sleeps when idle, so the first request after a quiet
+period waits about thirty seconds for the container to wake. That is the
+platform starting up, not the label check. Timings reported in the interface
+measure the check itself.
 
 ## How to use it
 
@@ -65,6 +70,7 @@ were taken from the four discovery interviews. What drove the design:
 | Jenny: the warning has to be exact, in capitals | The warning is compared strictly, against the 27 CFR 16.21 text |
 | Jenny: labels are photographed badly | The extractor reports legibility, which is surfaced rather than hidden |
 | Marcus: standalone proof of concept, nothing sensitive stored | No database, no file storage, images discarded after each request |
+| Marcus: the firewall blocks outbound calls to ML endpoints | The provider sits behind one function, with the Azure Government path written |
 
 ### The split between the model and the rules
 
@@ -99,10 +105,37 @@ tolerance for metric and imperial rounding.
 
 ## Tools used
 
-FastAPI and uvicorn, the Anthropic API for transcription, and one static HTML
-page with no build step. The page is served from the same process as the API,
-so there is one deployment and no cross origin configuration. The only
-dependency in the comparison logic is the standard library.
+FastAPI and uvicorn, httpx for the model call, and one static HTML page with no
+build step. The page is served from the same process as the API, so there is
+one deployment and no cross origin configuration. Four dependencies in total,
+and the comparison logic uses nothing outside the standard library.
+
+## Choosing a model provider
+
+`PROVIDER` selects between `anthropic`, `openai`, `azure` and `gemini`. Each is
+about thirty lines in `app/extract.py` behind one function. Nothing else in the
+codebase knows which one is in use.
+
+That indirection is the point rather than a convenience. Marcus said their
+network blocks outbound traffic to cloud ML endpoints and that this is part of
+what killed the scanning vendor pilot, so a hosted commercial API cannot be the
+answer for anything real. For federal work the first filter is FedRAMP, and
+AWS Bedrock and Azure OpenAI hold FedRAMP High in the relevant government
+regions while Google Vertex AI's FedRAMP High is not generally available yet.
+Azure OpenAI Service runs in Azure Government at FedRAMP High and DoD IL4 and
+IL5, with a model catalog that lags the commercial one.
+
+For an office that migrated to Azure in 2019, that makes Azure OpenAI in Azure
+Government the production target. The `azure` provider here is that path
+already: the same code, pointed at a resource whose endpoint ends in
+`.azure.us` instead of `.azure.com`, with the deployment name in place of a
+model name. Moving there is a configuration change and a model availability
+check, not a rewrite. The compliance rules, the tests and the interface do not
+move at all.
+
+This prototype runs against a commercial API because a proof of concept has to
+be reachable from outside the network to be testable, which is the trade-off
+this section exists to name.
 
 ## Assumptions
 
@@ -135,16 +168,11 @@ This was built against a few hours. What was deliberately left out:
   the warning to be readily legible and separate from other text. Those are
   measurements on the image, not text comparisons, and are not implemented.
   Only the capitalisation of the prefix is checked.
-- **The network constraint from Marcus's interview.** He said their firewall
-  blocks outbound traffic to cloud ML endpoints, and that this is part of what
-  killed the scanning vendor pilot. This prototype calls a hosted model, so as
-  built it would not run inside that network. That is a deliberate choice for a
-  standalone proof of concept and it is the first thing that would have to
-  change for anything real. The path there is already open: transcription is
-  one function behind one interface in `app/extract.py`, so swapping in an
-  Azure OpenAI deployment inside the FedRAMP boundary, Azure AI Document
-  Intelligence, or a self hosted OCR model means replacing that function. The
-  comparison rules, the tests and the interface do not change.
+- **The network constraint from Marcus's interview.** As deployed, this calls
+  a commercial endpoint that his firewall would block. The provider abstraction
+  above is the answer, and the `azure` path is already written, but it has not
+  been tested against an actual Azure Government resource because that needs a
+  subscription inside the boundary.
 - **No authentication, no audit log, no retention policy.** Marcus asked only
   that nothing crazy happen with a prototype, so nothing is stored at all.
   Production would need all three.
@@ -169,7 +197,7 @@ _Replace this line with the timings you measure on your own deployment._
 ```
 app/
   main.py          HTTP endpoints, batch orchestration, CSV parsing
-  extract.py       the one model call, prompt, JSON parsing
+  extract.py       the one model call, four interchangeable providers
   matching.py      all compliance rules, no model involved
   static/
     index.html     the whole interface
