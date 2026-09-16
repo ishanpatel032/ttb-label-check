@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Label check</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #eef1f4;
+    --surface: #ffffff;
+    --ink: #10161c;
+    --muted: #55636e;
+    --rule: #c3ccd5;
+    --accent: #14477d;
+    --pass: #1b6b3f;
+    --review: #8a5b00;
+    --fail: #a21b15;
+    --pass-wash: #edf6f0;
+    --review-wash: #fbf3e2;
+    --fail-wash: #fbeeed;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Public Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 17px;
+    line-height: 1.5;
+  }
+
+  header {
+    background: var(--accent);
+    color: #fff;
+    padding: 18px 28px;
+  }
+  header h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: -0.01em; }
+  header p { margin: 2px 0 0; font-size: 15px; opacity: 0.85; }
+
+  main {
+    display: grid;
+    grid-template-columns: 420px minmax(0, 1fr);
+    gap: 28px;
+    align-items: start;
+    max-width: 1320px;
+    margin: 0 auto;
+    padding: 28px;
+  }
+  @media (max-width: 960px) {
+    main { grid-template-columns: 1fr; padding: 18px; gap: 18px; }
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 22px;
+  }
+
+  h2 { font-size: 18px; margin: 0 0 14px; font-weight: 700; }
+
+  .modes { display: flex; gap: 0; margin-bottom: 20px; }
+  .modes button {
+    flex: 1;
+    padding: 13px 10px;
+    font: inherit;
+    font-weight: 600;
+    background: #fff;
+    color: var(--accent);
+    border: 2px solid var(--accent);
+    cursor: pointer;
+  }
+  .modes button:first-child { border-radius: 4px 0 0 4px; }
+  .modes button:last-child { border-radius: 0 4px 4px 0; border-left-width: 1px; }
+  .modes button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+
+  label { display: block; font-weight: 600; margin: 14px 0 5px; }
+  label:first-of-type { margin-top: 0; }
+  .hint { font-weight: 400; color: var(--muted); font-size: 15px; }
+
+  input[type="text"], input[type="file"] {
+    width: 100%;
+    padding: 11px 12px;
+    font: inherit;
+    border: 1px solid #8b97a2;
+    border-radius: 3px;
+    background: #fff;
+  }
+  input[type="file"] { padding: 9px; }
+
+  :focus-visible { outline: 3px solid #f0a500; outline-offset: 2px; }
+
+  .drop {
+    border: 2px dashed #8b97a2;
+    border-radius: 4px;
+    padding: 22px;
+    text-align: center;
+    color: var(--muted);
+    background: #f6f8fa;
+    cursor: pointer;
+  }
+  .drop.over { border-color: var(--accent); background: #e8eff7; color: var(--accent); }
+  .drop strong { display: block; color: var(--ink); font-size: 17px; }
+  .drop img { max-height: 150px; max-width: 100%; margin-top: 12px; border: 1px solid var(--rule); }
+
+  .go {
+    width: 100%;
+    margin-top: 20px;
+    padding: 15px;
+    font: inherit;
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+    background: var(--accent);
+    border: 0;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .go:hover { background: #0f3763; }
+  .go:disabled { background: #7b8894; cursor: default; }
+
+  .empty { color: var(--muted); }
+  .empty p { margin: 0 0 8px; }
+
+  .banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px 14px;
+    padding: 16px 18px;
+    border-left: 8px solid var(--rule);
+    border-radius: 3px;
+    margin-bottom: 18px;
+  }
+  .banner strong { font-size: 21px; }
+  .banner span { color: var(--muted); }
+  .banner.match { border-color: var(--pass); background: var(--pass-wash); }
+  .banner.review { border-color: var(--review); background: var(--review-wash); }
+  .banner.mismatch, .banner.error { border-color: var(--fail); background: var(--fail-wash); }
+
+  .field {
+    border: 1px solid var(--rule);
+    border-left: 8px solid var(--rule);
+    border-radius: 3px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    background: #fff;
+  }
+  .field.match { border-left-color: var(--pass); }
+  .field.review { border-left-color: var(--review); }
+  .field.mismatch, .field.missing { border-left-color: var(--fail); }
+
+  .field-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .field-head h3 { margin: 0; font-size: 17px; font-weight: 700; }
+  .verdict { font-weight: 700; white-space: nowrap; }
+  .verdict.match { color: var(--pass); }
+  .verdict.review { color: var(--review); }
+  .verdict.mismatch, .verdict.missing { color: var(--fail); }
+
+  .values { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; margin-top: 10px; }
+  @media (max-width: 640px) { .values { grid-template-columns: 1fr; } }
+  .values div span { display: block; color: var(--muted); font-size: 15px; }
+  .values div p { margin: 1px 0 0; overflow-wrap: anywhere; }
+  .values div p.blank { color: var(--muted); font-style: italic; }
+  .note { margin: 10px 0 0; color: var(--muted); }
+
+  .accepted { margin-top: 12px; font-weight: 600; color: var(--muted); }
+  .accepted input { width: 19px; height: 19px; margin-right: 8px; vertical-align: -3px; }
+  .field.accepted-on { opacity: 0.6; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  th, td { text-align: left; padding: 11px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-size: 15px; color: var(--muted); font-weight: 600; }
+  tr.mismatch td:first-child, tr.error td:first-child { box-shadow: inset 5px 0 0 var(--fail); }
+  tr.review td:first-child { box-shadow: inset 5px 0 0 var(--review); }
+  tr.match td:first-child { box-shadow: inset 5px 0 0 var(--pass); }
+  td.file { font-weight: 600; overflow-wrap: anywhere; }
+
+  .error-box {
+    border-left: 8px solid var(--fail);
+    background: var(--fail-wash);
+    padding: 16px 18px;
+    border-radius: 3px;
+  }
+  .warnings { margin-top: 16px; color: var(--muted); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Label check</h1>
+  <p>Compare a label image against the information in its application</p>
+</header>
+
+<main>
+  <div class="panel">
+    <div class="modes">
+      <button id="mode-one" aria-pressed="true">One label</button>
+      <button id="mode-many" aria-pressed="false">Many at once</button>
+    </div>
+
+    <form id="single">
+      <label for="brand_name">Brand name</label>
+      <input type="text" id="brand_name" name="brand_name" placeholder="Old Tom Distillery">
+
+      <label for="class_type">Class or type</label>
+      <input type="text" id="class_type" name="class_type" placeholder="Kentucky Straight Bourbon Whiskey">
+
+      <label for="abv">Alcohol content</label>
+      <input type="text" id="abv" name="abv" placeholder="45%">
+
+      <label for="net_contents">Net contents</label>
+      <input type="text" id="net_contents" name="net_contents" placeholder="750 mL">
+
+      <label for="producer">Bottler or producer</label>
+      <input type="text" id="producer" name="producer" placeholder="Old Tom Distillery, Bardstown, KY">
+
+      <label for="country_of_origin">Country of origin <span class="hint">imports only</span></label>
+      <input type="text" id="country_of_origin" name="country_of_origin" placeholder="">
+
+      <label for="label-file">Label image</label>
+      <div class="drop" id="drop" tabindex="0" role="button"
+           aria-label="Choose a label image or drop one here">
+        <strong>Choose a file or drop it here</strong>
+        JPG, PNG or WebP
+        <div id="preview"></div>
+      </div>
+      <input type="file" id="label-file" accept="image/*" class="hidden">
+
+      <button type="submit" class="go" id="go-one">Check this label</button>
+    </form>
+
+    <form id="many" class="hidden">
+      <label for="csv">Application data</label>
+      <p class="hint" style="margin:0 0 6px">
+        A CSV with one row per application. Needs a <strong>filename</strong> column
+        matching each image, plus any of: brand_name, class_type, abv,
+        net_contents, producer, country_of_origin.
+      </p>
+      <input type="file" id="csv" accept=".csv,text/csv">
+
+      <label for="images">Label images</label>
+      <p class="hint" style="margin:0 0 6px">Select up to 300 at once.</p>
+      <input type="file" id="images" accept="image/*" multiple>
+
+      <button type="submit" class="go" id="go-many">Check this batch</button>
+    </form>
+  </div>
+
+  <div class="panel" id="results" aria-live="polite">
+    <h2>Results</h2>
+    <div class="empty">
+      <p>Fill in what the application says, add the label image, and the fields
+         that disagree will be listed here.</p>
+      <p>Nothing is saved. Images are discarded once the check finishes.</p>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const results = $("results");
+
+const WORDS = {
+  match: "Matches",
+  review: "Check this",
+  mismatch: "Does not match",
+  missing: "Not on label",
+  error: "Failed",
+};
+
+// ---- mode switching -------------------------------------------------------
+function setMode(single) {
+  $("mode-one").setAttribute("aria-pressed", String(single));
+  $("mode-many").setAttribute("aria-pressed", String(!single));
+  $("single").classList.toggle("hidden", !single);
+  $("many").classList.toggle("hidden", single);
+}
+$("mode-one").onclick = () => setMode(true);
+$("mode-many").onclick = () => setMode(false);
+
+// ---- file picker ----------------------------------------------------------
+const drop = $("drop"), fileInput = $("label-file"), preview = $("preview");
+
+drop.onclick = () => fileInput.click();
+drop.onkeydown = (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); }
+};
+["dragenter", "dragover"].forEach(ev =>
+  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev =>
+  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => {
+  if (e.dataTransfer.files.length) { fileInput.files = e.dataTransfer.files; showPreview(); }
+});
+fileInput.onchange = showPreview;
+
+function showPreview() {
+  const f = fileInput.files[0];
+  preview.innerHTML = "";
+  if (!f) return;
+  const img = document.createElement("img");
+  img.src = URL.createObjectURL(f);
+  img.alt = "";
+  preview.appendChild(img);
+  const name = document.createElement("div");
+  name.textContent = f.name;
+  preview.appendChild(name);
+}
+
+// ---- rendering ------------------------------------------------------------
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function valueBlock(caption, text) {
+  const blank = !text;
+  return `<div><span>${esc(caption)}</span>
+    <p class="${blank ? "blank" : ""}">${blank ? "nothing found" : esc(text)}</p></div>`;
+}
+
+function fieldCard(f, i) {
+  const expected = f.field === "government_warning"
+    ? "The wording required by 27 CFR 16.21"
+    : f.expected;
+  return `
+    <div class="field ${f.status}" id="f${i}">
+      <div class="field-head">
+        <h3>${esc(f.label)}</h3>
+        <span class="verdict ${f.status}">${WORDS[f.status] || f.status}</span>
+      </div>
+      <div class="values">
+        ${valueBlock("Application says", expected)}
+        ${valueBlock("Label shows", f.found)}
+      </div>
+      ${f.note ? `<p class="note">${esc(f.note)}</p>` : ""}
+      ${f.status === "match" ? "" : `
+        <label class="accepted">
+          <input type="checkbox" onchange="document.getElementById('f${i}').classList.toggle('accepted-on', this.checked)">
+          Accept as correct
+        </label>`}
+    </div>`;
+}
+
+function renderSingle(r) {
+  const c = r.counts || {};
+  const parts = [];
+  if (c.mismatch) parts.push(`${c.mismatch} not matching`);
+  if (c.missing) parts.push(`${c.missing} missing`);
+  if (c.review) parts.push(`${c.review} to check`);
+  if (c.match) parts.push(`${c.match} matching`);
+
+  const legibility = r.legibility && r.legibility !== "clear"
+    ? `<p class="warnings">Image quality: ${esc(r.legibility)}. ${esc(r.legibility_note || "")}</p>`
+    : "";
+
+  results.innerHTML = `
+    <h2>Results</h2>
+    <div class="banner ${r.overall}">
+      <strong>${esc(r.headline)}</strong>
+      <span>${parts.join(" &middot; ")}</span>
+      <span style="margin-left:auto">${r.seconds}s</span>
+    </div>
+    ${r.fields.map(fieldCard).join("")}
+    ${legibility}`;
+}
+
+function renderBatch(d) {
+  const t = d.tally || {};
+  const rows = d.results.map(r => {
+    const c = r.counts || {};
+    const detail = r.overall === "error"
+      ? esc(r.error || "Could not be processed")
+      : (r.fields || []).filter(f => f.status !== "match")
+          .map(f => esc(f.label)).join(", ") || "All fields match";
+    return `<tr class="${r.overall}">
+      <td class="file">${esc(r.filename)}</td>
+      <td class="verdict ${r.overall}">${WORDS[r.overall] || r.overall}</td>
+      <td>${detail}</td>
+    </tr>`;
+  }).join("");
+
+  const parts = [];
+  if (t.mismatch) parts.push(`${t.mismatch} with findings`);
+  if (t.review) parts.push(`${t.review} to check`);
+  if (t.match) parts.push(`${t.match} clean`);
+  if (t.error) parts.push(`${t.error} failed`);
+
+  let warnings = "";
+  if (d.missing_images.length)
+    warnings += `<p class="warnings">No image uploaded for: ${esc(d.missing_images.join(", "))}</p>`;
+  if (d.unmatched_images.length)
+    warnings += `<p class="warnings">No CSV row for: ${esc(d.unmatched_images.join(", "))}</p>`;
+
+  results.innerHTML = `
+    <h2>Results</h2>
+    <div class="banner ${t.mismatch || t.error ? "mismatch" : t.review ? "review" : "match"}">
+      <strong>${d.processed} labels checked</strong>
+      <span>${parts.join(" &middot; ")}</span>
+      <span style="margin-left:auto">${d.seconds_each}s each</span>
+    </div>
+    <table>
+      <thead><tr><th>File</th><th>Result</th><th>Fields to look at</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${warnings}`;
+}
+
+function showBusy(msg) {
+  results.innerHTML = `<h2>Results</h2><p class="empty">${esc(msg)}</p>`;
+}
+
+function showError(msg) {
+  results.innerHTML = `<h2>Results</h2><div class="error-box">${esc(msg)}</div>`;
+}
+
+async function send(url, body, button, busyMessage, render) {
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = "Working\u2026";
+  showBusy(busyMessage);
+  try {
+    const res = await fetch(url, { method: "POST", body });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      showError(data?.detail || `The check failed with status ${res.status}.`);
+      return;
+    }
+    render(data);
+  } catch (e) {
+    showError("Could not reach the server. Check the connection and try again.");
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+// ---- submit ---------------------------------------------------------------
+$("single").onsubmit = (e) => {
+  e.preventDefault();
+  if (!fileInput.files[0]) { showError("Add a label image first."); return; }
+  const body = new FormData();
+  ["brand_name", "class_type", "abv", "net_contents", "producer", "country_of_origin"]
+    .forEach(k => body.append(k, $(k).value));
+  body.append("label", fileInput.files[0]);
+  send("/api/verify", body, $("go-one"), "Reading the label\u2026", renderSingle);
+};
+
+$("many").onsubmit = (e) => {
+  e.preventDefault();
+  const csv = $("csv").files[0], images = $("images").files;
+  if (!csv) { showError("Add the CSV of application data."); return; }
+  if (!images.length) { showError("Add the label images."); return; }
+  const body = new FormData();
+  body.append("applications", csv);
+  for (const f of images) body.append("labels", f);
+  send("/api/verify-batch", body, $("go-many"),
+       `Reading ${images.length} labels\u2026`, renderBatch);
+};
+</script>
+</body>
+</html>
