@@ -161,7 +161,19 @@ def _azure(b64: str, mime: str) -> tuple[str, dict, dict]:
 
 
 def _gemini(b64: str, mime: str) -> tuple[str, dict, dict]:
-    model = os.environ.get("MODEL", "gemini-2.5-flash")
+    model = os.environ.get("MODEL", "gemini-3.6-flash")
+
+    # Transcription needs no reasoning, and the Gemini 3 family thinks at a
+    # high level unless told otherwise, which costs far more time than the
+    # five second budget allows. Gemini 3 takes a thinking level; 2.5 takes a
+    # token budget instead, and sending both is rejected.
+    config: dict = {"maxOutputTokens": 900, "responseMimeType": "application/json"}
+    level = os.environ.get("THINKING_LEVEL", "low")
+    if "gemini-3" in model:
+        config["thinkingConfig"] = {"thinkingLevel": level}
+    elif "flash" in model:
+        config["thinkingConfig"] = {"thinkingBudget": 0}
+
     return (
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         {"x-goog-api-key": _need("GEMINI_API_KEY"), "content-type": "application/json"},
@@ -171,10 +183,7 @@ def _gemini(b64: str, mime: str) -> tuple[str, dict, dict]:
                 {"inline_data": {"mime_type": mime, "data": b64}},
                 {"text": USER_TEXT},
             ]}],
-            "generationConfig": {
-                "maxOutputTokens": 900,
-                "responseMimeType": "application/json",
-            },
+            "generationConfig": config,
         },
     )
 
