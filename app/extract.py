@@ -19,6 +19,7 @@ passes; matching.py does that with deterministic rules.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
@@ -231,6 +232,10 @@ def _parse(text: str) -> dict:
     return {k: (v.strip() if isinstance(v, str) else v) for k, v in out.items()}
 
 
+RETRY_ON = {429, 500, 502, 503, 504}
+MAX_ATTEMPTS = 3
+
+
 async def extract(image_bytes: bytes, filename: str,
                   content_type: str | None = None) -> dict:
     name = provider()
@@ -245,21 +250,42 @@ async def extract(image_bytes: bytes, filename: str,
         media_type(filename, content_type),
     )
 
+    # A shared API returns 503 when it is busy and 429 when we are going too
+    # fast. Both clear on their own, so a couple of short retries turn a
+    # visible failure into a slightly slower success. The backoff stays small
+    # to protect the latency budget, and anything still failing after three
+    # attempts is reported rather than hidden.
+    last: RuntimeError | None = None
     async with httpx.AsyncClient(timeout=TIMEOUT) as http:
-        response = await http.post(url, headers=headers, json=body)
+        for attempt in range(MAX_ATTEMPTS):
+            try:
+                response = await http.post(url, headers=headers, json=body)
+            except httpx.RequestError as e:
+                last = RuntimeError(f"Could not reach the {name} API: {e}")
+                await asyncio.sleep(0.5 * (attempt + 1))
+                continue
 
-    if response.status_code >= 400:
-        detail = response.text[:300]
-        if response.status_code in (401, 403):
-            raise RuntimeError(f"The {name} API rejected the credentials. {detail}")
-        if response.status_code == 429:
-            raise RuntimeError(
-                f"The {name} API is rate limiting. Lower BATCH_CONCURRENCY "
-                f"or wait a moment. {detail}"
+            if response.status_code < 400:
+                try:
+                    return _parse(_text_from(name, response.json()))
+                except (KeyError, IndexError, TypeError) as e:
+                    raise ValueError(f"Unexpected response shape from {name}: {e}")
+
+            detail = response.text[:300]
+            if response.status_code in (401, 403):
+                raise RuntimeError(
+                    f"The {name} API rejected the credentials. {detail}"
+                )
+            if response.status_code not in RETRY_ON:
+                raise RuntimeError(
+                    f"The {name} API returned {response.status_code}. {detail}"
+                )
+
+            last = RuntimeError(
+                f"The {name} API returned {response.status_code} after "
+                f"{MAX_ATTEMPTS} attempts. {detail}"
             )
-        raise RuntimeError(f"The {name} API returned {response.status_code}. {detail}")
+            if attempt < MAX_ATTEMPTS - 1:
+                await asyncio.sleep(0.5 * (attempt + 1))
 
-    try:
-        return _parse(_text_from(name, response.json()))
-    except (KeyError, IndexError, TypeError) as e:
-        raise ValueError(f"Unexpected response shape from {name}: {e}")
+    raise last or RuntimeError(f"The {name} API could not be reached.")
