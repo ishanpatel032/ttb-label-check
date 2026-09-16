@@ -3,7 +3,7 @@
 A prototype that compares an alcohol beverage label image against the data in
 its COLA application and shows a compliance agent which fields disagree.
 
-Live prototype: _add your deployed URL here_
+Live prototype: **https://ttb-label-check-qoyk.onrender.com**
 
 ## Running it locally
 
@@ -176,6 +176,10 @@ This was built against a few hours. What was deliberately left out:
 - **No authentication, no audit log, no retention policy.** Marcus asked only
   that nothing crazy happen with a prototype, so nothing is stored at all.
   Production would need all three.
+- **Free tier hosting.** The instance sleeps when idle and the API key is a
+  free tier key, which together account for the cold start and the latency
+  outliers above. Both are properties of how this prototype is hosted, not of
+  the design.
 - **Tests cover the comparison rules, not the extraction.** The rules are
   deterministic and worth pinning down. Extraction accuracy would need a
   labelled set of real applications to measure properly, which is the
@@ -183,14 +187,43 @@ This was built against a few hours. What was deliberately left out:
 
 ## Performance
 
-One label is one model call with a capped response, and the comparison work
-after it is microseconds. Batches run eight at a time, so throughput scales
-with concurrency while each individual label stays within the same budget.
-Measured round trip is reported in the interface for every check, single or
-batch, so the five second target is visible to the agent rather than asserted
-in a document.
+Sarah's five second ceiling was the hardest constraint in the brief, so the
+interface reports the measured round trip on every check rather than leaving
+the claim to this document.
 
-_Replace this line with the timings you measure on your own deployment._
+Measured on the deployment above, seven runs against the free instance tier:
+
+| Run | Seconds |
+| --- | --- |
+| Clean label, no findings | 1.90, 1.90, 2.16 |
+| Two findings (ABV and warning capitalisation) | 3.41 |
+| Outliers, same images | 12.47, 12.88, 15.87 |
+
+Typical is two to four seconds. The outliers are not explained by the label
+or by the number of findings, since the 3.41 second run carried two of them
+and the 15.87 second run used an image that had already returned in under
+four. They look like contention on a shared free tier endpoint, which also
+produced a transient 503 during testing. On a provisioned deployment inside
+the boundary this variance should not exist, but it has not been measured
+there, so it is reported as observed rather than explained away.
+
+The first version of this did not come close. Gemini 3 uses dynamic thinking
+by default and defaults to a high thinking level when none is specified, and
+on a transcription task that needs no reasoning at all, that produced a 21.44
+second round trip against a five second requirement. Setting the thinking
+level to low took the same label to 1.90 seconds, a factor of about ten, with
+no change to the output. That is the single change that made the constraint
+achievable, and it is why the level is configurable through `THINKING_LEVEL`
+rather than buried in the code.
+
+Batches run eight labels at a time, so throughput scales with concurrency
+while each individual label stays within the same budget. On a free tier API
+key, lower `BATCH_CONCURRENCY` to about four to stay under the rate limit.
+
+Transient upstream failures (429, 503 and the 5xx family) are retried up to
+three times with a short backoff, so a momentary spike in demand at the
+provider becomes a slower answer rather than a visible error. Credential and
+request errors are not retried, since they will not fix themselves.
 
 ## Layout
 
